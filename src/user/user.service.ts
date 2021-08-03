@@ -29,7 +29,8 @@ export class UserService {
   async insertUser(createUserDto: CreateUserDto) {
     if (!await this.usersRepository.findOne({ login: createUserDto.login })) {
       const user = this.usersRepository.create({ ...createUserDto, roles: [] })
-      for (const role of createUserDto.roles) {
+      const userRoles = new Set(user.roles)
+      for (const role of userRoles) {
         const currentRole = await this.rolesRepository.findOne(role)
         if (currentRole)
           user.roles.push(currentRole)
@@ -43,14 +44,60 @@ export class UserService {
 
 
   async updateUser(updateUserDto: UpdateUserDto) {
+    const user = await this.usersRepository.findOne({ where: {login: updateUserDto.login, password: updateUserDto.password}, relations: ["roles"]})
+    if (user) {
+      const userDataChanges: {name?: string, roles?: Role[]} = {}
+      const currentUserRoles: number[] = user.roles.map((role) => role.id)
+      const rolesForUpdate: Set<number> = new Set(updateUserDto.roles)
+
+      if (!(!user.roles.length || this.areSortedArrayEqual([...rolesForUpdate].sort(), currentUserRoles.sort()))) {
+        userDataChanges.roles = []
+        for (const role of rolesForUpdate) {
+          const currentRole = await this.rolesRepository.findOne(role)
+          if (currentRole)
+            userDataChanges.roles.push(currentRole)
+          else throw new HttpException({success: false, errors: ["Invalid user's role"]}, 400)
+        }
+      }
+
+      if (user.name !== updateUserDto.name)
+        userDataChanges.name = updateUserDto.name
+      if (Object.keys(userDataChanges).length) {
+        // save - Saves a given entity or array of entities. If the entity already exist in the database, it is updated.
+        // If the entity does not exist in the database, it is inserted. It saves all given entities in a single transaction
+        // (in the case of entity, manager is not transactional). Also supports partial updating since all undefined properties are skipped.
+        await this.usersRepository.save({login: updateUserDto.login, password: updateUserDto.password, ...userDataChanges})
+        console.log("User data was changed")
+      }
+      return {success: true}
+    }
+    throw new HttpException({success: false, errors: ["User is not found"]}, 400)
 
   }
 
   async removeUser(removeUserDto: RemoveUserDto) {
+    const user = await this.usersRepository.findOne({...removeUserDto})
+    if (user) {
+      await this.usersRepository.remove(user)
+      return {success: true}
+    }
+    throw new HttpException({success: false, errors: ["User is not found"]}, 404)
   }
 
 
   async initDb() {
     await this.rolesRepository.save([{name: "ADMIN"}, {name: "OPERATOR"}, {name: "ANALYST"}])
+  }
+
+  areSortedArrayEqual(arr1: any[], arr2: any[]) {
+    if (arr1.length === arr2.length) {
+      for (let i = 0; i < arr1.length; i++) {
+        if (arr1[i] !== arr2[i]) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return false;
   }
 }
