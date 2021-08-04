@@ -6,6 +6,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { User } from "./entities/user.entity";
 import { Repository } from "typeorm";
 import { Role } from "./entities/role.entity";
+import { RoleEnum } from "./utils/RoleEnum";
 
 @Injectable()
 export class UserService {
@@ -29,14 +30,13 @@ export class UserService {
   async insertUser(createUserDto: CreateUserDto) {
     if (!await this.usersRepository.findOne({ login: createUserDto.login })) {
       const user = this.usersRepository.create({ ...createUserDto, roles: [] })
-      const userRoles = new Set(user.roles)
+      const userRoles = new Set(createUserDto.roles)
       for (const role of userRoles) {
         const currentRole = await this.rolesRepository.findOne(role)
-        if (currentRole)
-          user.roles.push(currentRole)
-        else throw new HttpException({success: false, errors: ["Invalid user's role"]}, 400)
+        user.roles.push(currentRole)
       }
       await this.usersRepository.save(user)
+      console.log("Inserted user: ", user)
       return {success: true}
     }
     throw new HttpException({success: false, errors: ["User is already exist"]}, 400)
@@ -48,15 +48,14 @@ export class UserService {
     if (user) {
       const userDataChanges: {name?: string, roles?: Role[]} = {}
       const currentUserRoles: number[] = user.roles.map((role) => role.id)
-      const rolesForUpdate: Set<number> = new Set(updateUserDto.roles)
+      const rolesForUpdate: Set<RoleEnum> = new Set(updateUserDto.roles)
 
-      if (!(!user.roles.length || this.areSortedArrayEqual([...rolesForUpdate].sort(), currentUserRoles.sort()))) {
+      if (updateUserDto.roles && !this.areSortedArrayEqual([...rolesForUpdate].sort(), currentUserRoles.sort())) {
+
         userDataChanges.roles = []
         for (const role of rolesForUpdate) {
           const currentRole = await this.rolesRepository.findOne(role)
-          if (currentRole)
-            userDataChanges.roles.push(currentRole)
-          else throw new HttpException({success: false, errors: ["Invalid user's role"]}, 400)
+          userDataChanges.roles.push(currentRole)
         }
       }
 
@@ -76,6 +75,7 @@ export class UserService {
   }
 
   async removeUser(removeUserDto: RemoveUserDto) {
+    console.log("User remove: ", removeUserDto)
     const user = await this.usersRepository.findOne({...removeUserDto})
     if (user) {
       await this.usersRepository.remove(user)
