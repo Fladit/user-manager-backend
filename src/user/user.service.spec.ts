@@ -9,6 +9,8 @@ import { BadRequestException, INestApplication, ValidationPipe } from "@nestjs/c
 import * as request from 'supertest';
 import exp from "constants";
 import { ValidationError } from "class-validator";
+import { UpdateUserDto } from "./dto/update-user.dto";
+import { CreateUserDto } from "./dto/create-user.dto";
 
 describe('UserService', () => {
   let app: INestApplication;
@@ -48,13 +50,15 @@ describe('UserService', () => {
     await app.init();
     service = module.get<UserService>(UserService);
     userRepository = module.get('UserRepository')
+
+    jest.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   it('should be defined', () => {
     expect(service).toBeDefined();
   });
 
-  it("inserting a user with correct properties", async () => {
+  it("successful inserting a user with correct properties", async () => {
     const userForInsert = {
       login: "eugene7",
       password: "D2323$$",
@@ -76,7 +80,7 @@ describe('UserService', () => {
 
   })
 
-  it("inserting a user with incorrect properties", async () => {
+  it("unsuccessful inserting a user with incorrect properties", async () => {
     const userForInsert = {
       login: 415,
       password: "sd231..ds",
@@ -126,6 +130,87 @@ describe('UserService', () => {
 
   })
 
+  it("successful updating the user with correct properties (not empty roles)", async () => {
+    const currentUser: CreateUserDto = {
+      login: "eugene7",
+      password: "D2323$$",
+      name: "Eugene",
+      roles: [1, 2, 3]
+    }
+
+    const userForUpdate: UpdateUserDto = {
+      login: "eugene7",
+      password: "D2323$$",
+      name: "Eug",
+      roles: [1]
+    }
+
+    await successfulUserUpdate(currentUser, userForUpdate)
+  })
+
+  it("successful updating the user with correct properties (empty roles)", async () => {
+    const currentUser: CreateUserDto = {
+      login: "eugene7",
+      password: "D2323$$",
+      name: "Eugene",
+      roles: [1, 2, 3]
+    }
+
+    const userForUpdate: UpdateUserDto = {
+      login: "eugene7",
+      password: "D2323$$",
+      name: "Eug",
+    }
+
+    await successfulUserUpdate(currentUser, userForUpdate)
+  })
+
+  it("unsuccessful updating the user with incorrect properties (no required properties: name, roles)", async () => {
+    const currentUser = {
+      login: "eugene1",
+      password: "D2323$$",
+      name: "Eug",
+      roles: [1, 2, 3]
+    }
+
+    const userForUpdate = {
+      login: "eugene7",
+      password: "D2323$$",
+    }
+
+    await service.insertUser(currentUser)
+    expect(await userRepository.findOne({login: currentUser.login, password: currentUser.password})).toBeDefined()
+    const { body } = await request(app.getHttpServer())
+      .put('/api/v1/users/')
+      .send(userForUpdate)
+      .set('Accept', 'application/json')
+      .expect('Content-Type', /json/)
+      .expect(400);
+    expect(body.success).toEqual(false)
+  })
+
+  it("successful removing user from database", async () => {
+    const currentUser = {
+      login: "eugene1",
+      password: "D2323$$",
+      name: "Eug",
+      roles: [1, 2, 3]
+    }
+
+    await service.insertUser(currentUser)
+    expect(await userRepository.findOne({login: currentUser.login, password: currentUser.password})).toBeDefined()
+    const { body } = await request(app.getHttpServer())
+      .delete('/api/v1/users/')
+      .send({login: currentUser.login, password: currentUser.password})
+      .set('Accept', 'application/json')
+      .expect('Content-Type', /json/)
+      .expect(200);
+    expect(body).toEqual(successBody)
+    expect(await userRepository.findOne({login: currentUser.login, password: currentUser.password})).toBeUndefined()
+  })
+
+
+
   afterEach(async () => {
     await userRepository.query(`DELETE FROM user;`);
   });
@@ -133,4 +218,22 @@ describe('UserService', () => {
   afterAll(async () => {
     await app.close();
   });
+
+  async function successfulUserUpdate(currentUser: CreateUserDto, userForUpdate: UpdateUserDto) {
+    await service.insertUser(currentUser)
+
+    expect(await userRepository.findOne({login: currentUser.login, password: currentUser.password})).toBeDefined()
+    const { body } = await request(app.getHttpServer())
+      .put('/api/v1/users/')
+      .send(userForUpdate)
+      .set('Accept', 'application/json')
+      .expect('Content-Type', /json/)
+      .expect(200);
+    expect(body).toEqual(successBody)
+    const updatedUser: User = await userRepository.findOne({where: {login: currentUser.login, password: currentUser.password}, relations: ["roles"]})
+    expect(updatedUser).toBeDefined()
+    if (userForUpdate.roles)
+      expect({...updatedUser, roles: updatedUser.roles.map(role => role.id)}).toEqual(userForUpdate)
+    else expect(updatedUser).toEqual({...userForUpdate, roles: updatedUser.roles})
+  }
 });

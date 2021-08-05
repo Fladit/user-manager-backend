@@ -15,5 +15,5 @@ export class UpdateUserDto extends PickType(CreateUserDto, ["login", "name", "pa
   @IsOptional()
   @IsArray()
   @IsEnum(RoleEnum, {each: true})
-  roles: RoleEnum[];
+  roles?: RoleEnum[];
 }
