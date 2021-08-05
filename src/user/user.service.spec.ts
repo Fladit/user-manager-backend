@@ -1,18 +1,136 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { UserService } from './user.service';
+import { UserModule } from "./user.module";
+import { TypeOrmModule } from "@nestjs/typeorm";
+import { Role } from "./entities/role.entity";
+import { User } from "./entities/user.entity";
+import { Repository } from "typeorm";
+import { BadRequestException, INestApplication, ValidationPipe } from "@nestjs/common";
+import * as request from 'supertest';
+import exp from "constants";
+import { ValidationError } from "class-validator";
 
 describe('UserService', () => {
+  let app: INestApplication;
   let service: UserService;
+  let userRepository: Repository<User>
+
+  const successBody = {success: true}
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [UserService],
+      imports: [
+        UserModule,
+        TypeOrmModule.forRoot({
+          type: 'mysql',
+          host: 'localhost',
+          port: 3306,
+          username: 'eugene',
+          password: '12345d',
+          database: 'user_manager_test',
+          entities: [User, Role],
+          synchronize: false,
+          keepConnectionAlive: true,
+        }),
+      ]
     }).compile();
 
+    app = module.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      exceptionFactory: (validationErrors: ValidationError[] = []) => {
+        return new BadRequestException({ success: false, errors: validationErrors.map((error => {
+            return {property: error.property, constraints: error.constraints}})) });
+      },
+    }))
+    app.enableCors()
+    await app.init();
     service = module.get<UserService>(UserService);
+    userRepository = module.get('UserRepository')
   });
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  it("inserting a user with correct properties", async () => {
+    const userForInsert = {
+      login: "eugene7",
+      password: "D2323$$",
+      name: "Eugene",
+      roles: [1, 2, 3]
+    }
+
+    expect(await userRepository.findOne({login: userForInsert.login, password: userForInsert.password})).toBeUndefined()
+    const { body } = await request(app.getHttpServer())
+      .post('/api/v1/users/')
+      .send(userForInsert)
+      .set('Accept', 'application/json')
+      .expect('Content-Type', /json/)
+      .expect(201);
+    expect(body).toEqual(successBody)
+    const insertedUser: User = await userRepository.findOne({where: {login: userForInsert.login, password: userForInsert.password}, relations: ["roles"]})
+    expect(insertedUser).toBeDefined()
+    expect({...insertedUser, roles: insertedUser.roles.map(role => role.id)}).toEqual(userForInsert)
+
+  })
+
+  it("inserting a user with incorrect properties", async () => {
+    const userForInsert = {
+      login: 415,
+      password: "sd231..ds",
+      roles: [4, 5, 6]
+    }
+
+    const result = {
+      "success": false,
+      "errors": [
+        {
+          "property": "login",
+          "constraints": {
+            "isString": "login must be a string"
+          }
+        },
+        {
+          "property": "name",
+          "constraints": {
+            "isNotEmpty": "name should not be empty",
+            "isString": "name must be a string"
+          }
+        },
+        {
+          "property": "password",
+          "constraints": {
+            "matches": "password must match /((([^ \\t])*[A-Z]+([^ \\t])*[\\d]+([^ \\t])*)|(([^ \\t])*[\\d]+([^ \\t])*[A-Z]+([^ \\t])*))/ regular expression"
+          }
+        },
+        {
+          "property": "roles",
+          "constraints": {
+            "isEnum": "each value in roles must be a valid enum value"
+          }
+        }
+      ]
+    }
+
+    const { body } = await request(app.getHttpServer())
+      .post('/api/v1/users/')
+      .send(userForInsert)
+      .set('Accept', 'application/json')
+      .expect('Content-Type', /json/)
+      .expect(400);
+    expect(body).toEqual(result)
+    const insertedUser: User = await userRepository.findOne({where: {login: userForInsert.login, password: userForInsert.password}, relations: ["roles"]})
+    expect(insertedUser).toBeUndefined()
+
+  })
+
+  afterEach(async () => {
+    await userRepository.query(`DELETE FROM user;`);
+  });
+
+  afterAll(async () => {
+    await app.close();
   });
 });
